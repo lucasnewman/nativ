@@ -1,0 +1,84 @@
+name: Nativ
+options:
+  bundleIdPrefix: dev.local
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ARCHS: arm64
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.4
+  textual:
+    url: https://github.com/gonzalezreal/textual.git
+    exactVersion: 0.5.0
+schemes:
+  Nativ:
+    build:
+      targets:
+        Nativ: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+targets:
+  NativServerKit:
+    type: framework
+    platform: macOS
+    configFiles:
+      Debug: Configuration/Signing.xcconfig
+      Release: Configuration/Signing.xcconfig
+    sources:
+      - path: Sources/NativServerKit
+    postBuildScripts:
+      - name: Build mlx-vlm-server resource
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          python3 "$SRCROOT/PythonDistribution/Scripts/build_xcode_framework_resource.py"
+    settings:
+      base:
+        ARCHS: arm64
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(NATIV_SERVER_KIT_BUNDLE_IDENTIFIER)
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+  Nativ:
+    type: application
+    platform: macOS
+    configFiles:
+      Debug: Configuration/Signing.xcconfig
+      Release: Configuration/Signing.xcconfig
+    sources:
+      - path: Sources/Nativ
+        excludes:
+          - ModelProviderIcons
+      - path: Sources/Nativ/ModelProviderIcons
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: NativServerKit
+      - package: Sparkle
+        product: Sparkle
+      - package: textual
+        product: Textual
+    settings:
+      base:
+        ARCHS: arm64
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        PRODUCT_BUNDLE_IDENTIFIER: $(NATIV_BUNDLE_IDENTIFIER)
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Configuration/Nativ-Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Nativ
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        MARKETING_VERSION: 0.2.4
+        CURRENT_PROJECT_VERSION: 6
