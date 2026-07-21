@@ -171,7 +171,7 @@ struct DeveloperView: View {
                     spacing: 8
                 ) {
                     ForEach(ServerEndpoint.endpoints(in: selectedEndpointCategory)) { endpoint in
-                        ServerEndpointRow(endpoint: endpoint) {
+                        ServerEndpointRow(endpoint: endpoint, baseURL: model.settings.serverBaseURL) {
                             copyEndpoint(endpoint)
                         }
                     }
@@ -196,7 +196,7 @@ struct DeveloperView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Server endpoints")
                     .font(.callout.weight(.semibold))
-                Text(ServerEndpoint.baseURL.absoluteString)
+                Text(model.settings.serverBaseURL.absoluteString)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
@@ -339,19 +339,18 @@ struct DeveloperView: View {
     private func copyEndpoint(_ endpoint: ServerEndpoint) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(endpoint.absoluteURL, forType: .string)
+        pasteboard.setString(endpoint.absoluteURL(baseURL: model.settings.serverBaseURL), forType: .string)
     }
 }
 
 private struct ServerEndpoint: Identifiable {
-    static let baseURL = URL(string: "http://127.0.0.1:8080")!
-
     let method: ServerEndpointMethod
     let path: String
     let category: ServerEndpointCategory
 
     var id: String { "\(method.rawValue):\(path)" }
-    var absoluteURL: String { Self.baseURL.absoluteString + path }
+
+    func absoluteURL(baseURL: URL) -> String { baseURL.absoluteString + path }
 
     static func endpoints(in category: ServerEndpointCategory) -> [ServerEndpoint] {
         supported.filter { $0.category == category }
@@ -414,6 +413,7 @@ private enum ServerEndpointMethod: String {
 
 private struct ServerEndpointRow: View {
     let endpoint: ServerEndpoint
+    let baseURL: URL
     let copyAction: () -> Void
     @State private var isHovering = false
 
@@ -447,7 +447,7 @@ private struct ServerEndpointRow: View {
                 .fill(isHovering ? Color.secondary.opacity(0.08) : .clear)
         )
         .onHover { isHovering = $0 }
-        .help("Copy \(endpoint.absoluteURL)")
+        .help("Copy \(endpoint.absoluteURL(baseURL: baseURL))")
     }
 }
 

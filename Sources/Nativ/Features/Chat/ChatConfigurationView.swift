@@ -29,6 +29,7 @@ struct ModelConfigurationLayout<Content: View>: View {
                 ModelConfigurationView(
                     settings: $model.settings,
                     settingsRequireRestart: model.settingsRequireRestart,
+                    activeServerPort: model.activeServerPort,
                     onReset: model.resetSettings
                 )
                 .frame(width: 320)
@@ -62,10 +63,12 @@ struct ModelConfigurationLayout<Content: View>: View {
 struct ModelConfigurationView: View {
     @Binding var settings: NativSettings
     let settingsRequireRestart: Bool
+    let activeServerPort: Int?
     let onReset: () -> Void
     @State private var modelConfiguration: LocalModelConfigurationMetadata?
     @State private var isLoadingModelConfiguration = false
     @State private var modelConfigurationRevision = 0
+    @State private var isSelectedPortAvailable = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,6 +85,7 @@ struct ModelConfigurationView: View {
                     speculativeDecodingSection
                     structuredOutputSection
                     prefixCachingSection
+                    serverSection
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
@@ -123,6 +127,41 @@ struct ModelConfigurationView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
+    }
+
+    private var serverSection: some View {
+        ChatConfigurationSection(title: "Server") {
+            ConfigurationIntegerField(
+                title: "Port",
+                value: $settings.serverPort,
+                range: 1...65_535,
+                usesGroupingSeparator: false
+            )
+
+            if showsPortInUseWarning {
+                Label(
+                    "Port \(String(settings.normalized().serverPort)) is already in use — that port can’t be used.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.footnote)
+                .foregroundStyle(.orange)
+            } else {
+                Text("The local server listens at 127.0.0.1 on this port.")
+                    .configurationHintStyle()
+            }
+        }
+        .task(id: settings.normalized().serverPort) {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            let port = settings.normalized().serverPort
+            let available = await Task.detached { ServerPortProbe.isAvailable(port) }.value
+            guard !Task.isCancelled else { return }
+            isSelectedPortAvailable = available
+        }
+    }
+
+    private var showsPortInUseWarning: Bool {
+        !isSelectedPortAvailable && settings.normalized().serverPort != activeServerPort
     }
 
     private var modelContextSection: some View {
@@ -509,6 +548,7 @@ private struct ConfigurationIntegerField: View {
     let title: String
     @Binding var value: Int
     let range: ClosedRange<Int>
+    var usesGroupingSeparator = true
 
     var body: some View {
         HStack(spacing: 8) {
@@ -516,7 +556,7 @@ private struct ConfigurationIntegerField: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
-            TextField("", value: $value, format: .number)
+            TextField("", value: $value, format: .number.grouping(usesGroupingSeparator ? .automatic : .never))
                 .font(.body)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 104)
