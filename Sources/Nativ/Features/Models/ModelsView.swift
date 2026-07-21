@@ -48,7 +48,7 @@ struct ModelsView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .task(id: modelScanPath) {
-            localLibrary.scan(path: model.settings.modelSearchPath)
+            rescanLocalModels()
         }
         .task(id: hubSearchTaskID) {
             guard section == .discover else { return }
@@ -88,8 +88,10 @@ struct ModelsView: View {
             HStack(spacing: 10) {
                 ModelsSearchField(prompt: "Filter installed models", text: $localQuery)
 
+                sourcesMenu
+
                 Button {
-                    localLibrary.scan(path: model.settings.modelSearchPath)
+                    rescanLocalModels()
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -140,7 +142,7 @@ struct ModelsView: View {
                                 selectedLanguageModelID: model.settings.normalized().languageModelID,
                                 isModelSwitchInProgress: model.modelSwitchInProgress,
                                 isDeleting: localLibrary.deletingModelIDs.contains(localModel.repoID),
-                                canDelete: !model.modelSwitchInProgress && !isModelInUse(localModel.repoID),
+                                canDelete: localModel.isDeletable && !model.modelSwitchInProgress && !isModelInUse(localModel.repoID),
                                 onLoadModel: { model.switchLanguageModel(to: localModel.repoID) },
                                 onDelete: { deleteInstalledModel(localModel) }
                             )
@@ -219,7 +221,7 @@ struct ModelsView: View {
                                             repoID: hubModel.id,
                                             cachePath: model.settings.modelSearchPath
                                         ) {
-                                            localLibrary.scan(path: model.settings.modelSearchPath)
+                                            rescanLocalModels()
                                             NotificationCenter.default.post(
                                                 name: .localModelLibraryDidChange,
                                                 object: nil
@@ -289,6 +291,7 @@ struct ModelsView: View {
     }
 
     private func deleteInstalledModel(_ localModel: LocalModel) {
+        guard localModel.isDeletable else { return }
         localLibrary.delete(
             model: localModel,
             path: model.settings.modelSearchPath
@@ -317,6 +320,7 @@ struct ModelsView: View {
             ? localLibrary.models
             : localLibrary.models.filter {
                 $0.repoID.localizedCaseInsensitiveContains(query)
+                    || $0.displayName.localizedCaseInsensitiveContains(query)
                     || $0.provider?.displayName.localizedCaseInsensitiveContains(query) == true
             }
 
@@ -537,7 +541,65 @@ struct ModelsView: View {
     }
 
     private var modelScanPath: String {
-        model.settings.normalized().expandedModelSearchPath
+        let settings = model.settings.normalized()
+        return ([settings.expandedModelSearchPath] + settings.additionalModelSearchPaths)
+            .joined(separator: "\u{0}")
+    }
+
+    private var sourcesMenu: some View {
+        Menu {
+            Section("Hugging Face cache") {
+                Text(abbreviatedPath(model.settings.normalized().modelSearchPath))
+            }
+            Section("Model folders") {
+                ForEach(model.settings.normalized().additionalModelSearchPaths, id: \.self) { path in
+                    Menu(abbreviatedPath(path)) {
+                        Button("Remove", role: .destructive) {
+                            removeModelSourceFolder(path)
+                        }
+                    }
+                }
+                Button {
+                    addModelSourceFolder()
+                } label: {
+                    Label("Add Folder…", systemImage: "plus")
+                }
+            }
+        } label: {
+            Label("Sources", systemImage: "folder")
+        }
+        .fixedSize()
+        .help("Folders scanned for MLX models in addition to the Hugging Face cache")
+    }
+
+    private func rescanLocalModels() {
+        localLibrary.scan(
+            path: model.settings.modelSearchPath,
+            additionalPaths: model.settings.normalized().additionalModelSearchPaths
+        )
+    }
+
+    private func addModelSourceFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        panel.message = "Choose a folder containing MLX models."
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        model.settings.additionalModelSearchPaths.append(
+            (url.path as NSString).abbreviatingWithTildeInPath
+        )
+    }
+
+    private func removeModelSourceFolder(_ path: String) {
+        model.settings.additionalModelSearchPaths.removeAll { $0 == path }
+    }
+
+    private func abbreviatedPath(_ path: String) -> String {
+        (LocalModelDiscovery.expandedPath(path) as NSString).abbreviatingWithTildeInPath
     }
 
     private var hubSearchTaskID: String {
@@ -640,9 +702,16 @@ private struct InstalledModelRow: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 7) {
-                            Text(modelName(localModel.repoID))
+                            Text(modelName(localModel.displayName))
                                 .font(.body.weight(.semibold))
                                 .lineLimit(1)
+                            if let sourceLabel = localModel.source.badgeLabel {
+                                ModelPill(
+                                    title: sourceLabel,
+                                    systemImage: "cube",
+                                    color: .purple
+                                )
+                            }
                             if isLoading {
                                 ModelPill(
                                     title: "Loading model",
