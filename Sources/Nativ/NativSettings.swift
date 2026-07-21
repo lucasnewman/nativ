@@ -2,7 +2,11 @@ import Foundation
 import NativServerKit
 
 struct NativSettings: Codable, Equatable {
-    static let defaultModelSearchPath = "~/.cache/huggingface/hub"
+    /// Default hub cache location, resolved from the environment.
+    /// See `HuggingFaceCache.defaultHubPath`.
+    static var defaultModelSearchPath: String {
+        HuggingFaceCache.defaultHubPath()
+    }
 
     var modelSearchPath: String
     var additionalModelSearchPaths: [String]
@@ -161,7 +165,8 @@ struct NativSettings: Codable, Equatable {
         let defaults = Self()
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let legacySelectedModelID = try container.decodeIfPresent(String.self, forKey: .selectedModelID)
-        modelSearchPath = try container.decodeIfPresent(String.self, forKey: .modelSearchPath) ?? defaults.modelSearchPath
+        let storedModelSearchPath = try container.decodeIfPresent(String.self, forKey: .modelSearchPath)
+        modelSearchPath = HuggingFaceCache.resolvedSearchPath(stored: storedModelSearchPath)
         additionalModelSearchPaths = try container.decodeIfPresent([String].self, forKey: .additionalModelSearchPaths) ?? defaults.additionalModelSearchPaths
         languageModelID = try container.decodeIfPresent(String.self, forKey: .languageModelID) ?? legacySelectedModelID ?? defaults.languageModelID
         imageGenerationModelID = try container.decodeIfPresent(String.self, forKey: .imageGenerationModelID) ?? defaults.imageGenerationModelID
