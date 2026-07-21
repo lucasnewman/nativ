@@ -21,7 +21,7 @@ struct ModelsView: View {
     @Binding var showsConfiguration: Bool
     @StateObject private var localLibrary = LocalModelLibrary()
     @StateObject private var hubLibrary = HuggingFaceModelLibrary()
-    @StateObject private var downloadManager = HuggingFaceDownloadManager()
+    @ObservedObject private var downloadManager = HuggingFaceDownloadManager.shared
     @State private var section: ModelsPageSection = .installed
     @State private var localQuery = ""
     @State private var hubQuery = ""
@@ -59,7 +59,6 @@ struct ModelsView: View {
         .onDisappear {
             localLibrary.cancel()
             hubLibrary.cancel()
-            downloadManager.cancelDownload()
         }
     }
 
