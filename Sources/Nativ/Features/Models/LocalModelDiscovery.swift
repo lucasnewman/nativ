@@ -44,12 +44,12 @@ enum LocalModelCapability: String, CaseIterable, Hashable, Sendable {
 
 enum LocalModelSource: String, Equatable, Sendable {
     case huggingFaceCache
-    case lmStudio
+    case external
 
     var badgeLabel: String? {
         switch self {
         case .huggingFaceCache: nil
-        case .lmStudio: "LM Studio"
+        case .external: "External"
         }
     }
 }
@@ -197,15 +197,14 @@ struct LocalModelConfigurationMetadata: Equatable, Sendable {
 }
 
 enum LocalModelDiscovery {
-    static let lmStudioModelRoots = [
-        "~/.lmstudio/models",
-        "~/.cache/lm-studio/models"
-    ]
-
-    static func scan(path: String) async throws -> [LocalModel] {
+    static func scan(path: String, additionalPaths: [String] = []) async throws -> [LocalModel] {
         let expandedPath = Self.expandedPath(path)
+        let expandedAdditionalPaths = additionalPaths.map(Self.expandedPath)
         return try await Task.detached(priority: .userInitiated) {
-            let externalModels = Self.scanLMStudioSynchronously(fileManager: FileManager.default)
+            let externalModels = Self.scanAdditionalPathsSynchronously(
+                expandedAdditionalPaths,
+                fileManager: FileManager.default
+            )
             do {
                 return Self.sortedByDisplayName(try Self.scanSynchronously(path: expandedPath) + externalModels)
             } catch {
@@ -328,71 +327,88 @@ enum LocalModelDiscovery {
         }
     }
 
-    private static func scanLMStudioSynchronously(fileManager: FileManager) -> [LocalModel] {
+    private static func scanAdditionalPathsSynchronously(
+        _ rootPaths: [String],
+        fileManager: FileManager
+    ) -> [LocalModel] {
         var models: [LocalModel] = []
         var seenPaths = Set<String>()
 
-        for root in lmStudioModelRoots {
-            let rootURL = URL(
-                fileURLWithPath: (root as NSString).expandingTildeInPath,
-                isDirectory: true
-            )
-            guard isDirectoryURL(rootURL, fileManager: fileManager),
-                  let publisherURLs = try? fileManager.contentsOfDirectory(
-                      at: rootURL,
-                      includingPropertiesForKeys: [.isDirectoryKey],
-                      options: [.skipsHiddenFiles]
-                  )
-            else {
+        for rootPath in rootPaths {
+            let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+            guard isDirectoryURL(rootURL, fileManager: fileManager) else {
                 continue
             }
 
-            for publisherURL in publisherURLs where isDirectoryURL(publisherURL, fileManager: fileManager) {
-                guard let modelURLs = try? fileManager.contentsOfDirectory(
-                    at: publisherURL,
-                    includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-                    options: [.skipsHiddenFiles]
-                ) else {
+            if isLikelyMLXModelSnapshot(rootURL, fileManager: fileManager) {
+                if let model = externalModel(at: rootURL, fileManager: fileManager, seenPaths: &seenPaths) {
+                    models.append(model)
+                }
+                continue
+            }
+
+            for childURL in directoryContents(of: rootURL, fileManager: fileManager) {
+                if isLikelyMLXModelSnapshot(childURL, fileManager: fileManager) {
+                    if let model = externalModel(at: childURL, fileManager: fileManager, seenPaths: &seenPaths) {
+                        models.append(model)
+                    }
                     continue
                 }
 
-                for modelURL in modelURLs where isDirectoryURL(modelURL, fileManager: fileManager) {
-                    let standardizedPath = modelURL.standardizedFileURL.path
-                    guard !seenPaths.contains(standardizedPath),
-                          isLikelyMLXModelSnapshot(modelURL, fileManager: fileManager)
-                    else {
-                        continue
+                for grandchildURL in directoryContents(of: childURL, fileManager: fileManager)
+                where isLikelyMLXModelSnapshot(grandchildURL, fileManager: fileManager) {
+                    if let model = externalModel(at: grandchildURL, fileManager: fileManager, seenPaths: &seenPaths) {
+                        models.append(model)
                     }
-                    seenPaths.insert(standardizedPath)
-
-                    let hubStyleID = "\(publisherURL.lastPathComponent)/\(modelURL.lastPathComponent)"
-                    let modifiedAt = (try? modelURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-                    let memoryMetadata = modelMemoryMetadata(
-                        repoID: hubStyleID,
-                        snapshotURL: modelURL,
-                        fileManager: fileManager
-                    )
-                    models.append(LocalModel(
-                        repoID: standardizedPath,
-                        snapshotURL: modelURL,
-                        modifiedAt: modifiedAt,
-                        sizeBytes: snapshotSize(at: modelURL, fileManager: fileManager),
-                        parameterCount: memoryMetadata.parameterCount,
-                        quantizationBits: memoryMetadata.quantizationBits,
-                        quantizationGroupSize: memoryMetadata.quantizationGroupSize,
-                        contextSize: contextSize(at: modelURL, fileManager: fileManager),
-                        provider: modelProvider(
-                            repoID: hubStyleID,
-                            snapshotURL: modelURL,
-                            fileManager: fileManager
-                        ),
-                        capabilities: modelCapabilities(at: modelURL, fileManager: fileManager),
-                        source: .lmStudio
-                    ))
                 }
             }
         }
         return models
+    }
+
+    private static func directoryContents(of url: URL, fileManager: FileManager) -> [URL] {
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return contents.filter { isDirectoryURL($0, fileManager: fileManager) }
+    }
+
+    private static func externalModel(
+        at modelURL: URL,
+        fileManager: FileManager,
+        seenPaths: inout Set<String>
+    ) -> LocalModel? {
+        let standardizedPath = modelURL.standardizedFileURL.path
+        guard seenPaths.insert(standardizedPath).inserted else {
+            return nil
+        }
+
+        let hubStyleID = modelURL.standardizedFileURL.pathComponents.suffix(2).joined(separator: "/")
+        let modifiedAt = (try? modelURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let memoryMetadata = modelMemoryMetadata(
+            repoID: hubStyleID,
+            snapshotURL: modelURL,
+            fileManager: fileManager
+        )
+        return LocalModel(
+            repoID: standardizedPath,
+            snapshotURL: modelURL,
+            modifiedAt: modifiedAt,
+            sizeBytes: snapshotSize(at: modelURL, fileManager: fileManager),
+            parameterCount: memoryMetadata.parameterCount,
+            quantizationBits: memoryMetadata.quantizationBits,
+            quantizationGroupSize: memoryMetadata.quantizationGroupSize,
+            contextSize: contextSize(at: modelURL, fileManager: fileManager),
+            provider: modelProvider(
+                repoID: hubStyleID,
+                snapshotURL: modelURL,
+                fileManager: fileManager
+            ),
+            capabilities: modelCapabilities(at: modelURL, fileManager: fileManager),
+            source: .external
+        )
     }
 
     private static func configurationMetadataSynchronously(
@@ -1176,14 +1192,14 @@ final class LocalModelLibrary: ObservableObject {
         scanTask?.cancel()
     }
 
-    func scan(path: String) {
+    func scan(path: String, additionalPaths: [String] = []) {
         scanTask?.cancel()
         isScanning = true
         error = nil
 
         scanTask = Task { [weak self] in
             do {
-                let models = try await LocalModelDiscovery.scan(path: path)
+                let models = try await LocalModelDiscovery.scan(path: path, additionalPaths: additionalPaths)
                 guard !Task.isCancelled else {
                     return
                 }

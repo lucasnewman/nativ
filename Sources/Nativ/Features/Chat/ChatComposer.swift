@@ -201,11 +201,17 @@ struct ChatComposer: View {
             .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 4)
         }
         .padding(.vertical, 18)
-        .task(id: model.settings.modelSearchPath) {
-            localLibrary.scan(path: model.settings.modelSearchPath)
+        .task(id: modelScanKey) {
+            localLibrary.scan(
+                path: model.settings.modelSearchPath,
+                additionalPaths: model.settings.normalized().additionalModelSearchPaths
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: .localModelLibraryDidChange)) { _ in
-            localLibrary.scan(path: model.settings.modelSearchPath)
+            localLibrary.scan(
+                path: model.settings.modelSearchPath,
+                additionalPaths: model.settings.normalized().additionalModelSearchPaths
+            )
         }
         .onChange(of: localLibrary.models) { _, models in
             disableThinkingIfUnsupported(modelID: selectedModelID, models: models)
@@ -217,6 +223,12 @@ struct ChatComposer: View {
         .onDisappear {
             localLibrary.cancel()
         }
+    }
+
+    private var modelScanKey: String {
+        let settings = model.settings.normalized()
+        return ([settings.expandedModelSearchPath] + settings.additionalModelSearchPaths)
+            .joined(separator: "\u{0}")
     }
 
     private var modelPicker: some View {

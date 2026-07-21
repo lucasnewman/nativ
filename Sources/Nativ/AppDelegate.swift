@@ -852,9 +852,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
     }
 
+    private var modelScanKey: String {
+        let settings = model.settings.normalized()
+        return ([settings.expandedModelSearchPath] + settings.additionalModelSearchPaths)
+            .joined(separator: "\u{0}")
+    }
+
     private func refreshLocalModelsIfNeeded() {
-        let currentPath = model.settings.normalized().expandedModelSearchPath
-        guard lastScannedModelPath != currentPath else {
+        guard lastScannedModelPath != modelScanKey else {
             return
         }
         refreshLocalModels()
@@ -862,7 +867,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refreshLocalModels() {
         modelScanTask?.cancel()
-        let searchPath = model.settings.normalized().expandedModelSearchPath
+        let settings = model.settings.normalized()
+        let searchPath = settings.expandedModelSearchPath
+        let additionalPaths = settings.additionalModelSearchPaths
+        let scanKey = modelScanKey
         modelScanInProgress = true
         modelScanError = nil
         rebuildModelSubmenu()
@@ -873,12 +881,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
 
             do {
-                let models = try await LocalModelDiscovery.scan(path: searchPath)
+                let models = try await LocalModelDiscovery.scan(path: searchPath, additionalPaths: additionalPaths)
                 guard !Task.isCancelled else {
                     return
                 }
                 self.localModels = models
-                self.lastScannedModelPath = searchPath
+                self.lastScannedModelPath = scanKey
             } catch is CancellationError {
                 return
             } catch {
@@ -888,7 +896,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.localModels = []
                 self.modelScanError = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
-                self.lastScannedModelPath = searchPath
+                self.lastScannedModelPath = scanKey
             }
 
             self.modelScanInProgress = false

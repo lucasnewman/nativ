@@ -5,6 +5,7 @@ struct NativSettings: Codable, Equatable {
     static let defaultModelSearchPath = "~/.cache/huggingface/hub"
 
     var modelSearchPath: String
+    var additionalModelSearchPaths: [String]
     var languageModelID: String?
     var imageGenerationModelID: String?
     var textToSpeechModelID: String?
@@ -42,6 +43,7 @@ struct NativSettings: Codable, Equatable {
 
     init(
         modelSearchPath: String = Self.defaultModelSearchPath,
+        additionalModelSearchPaths: [String] = [],
         languageModelID: String? = nil,
         imageGenerationModelID: String? = nil,
         textToSpeechModelID: String? = nil,
@@ -78,6 +80,7 @@ struct NativSettings: Codable, Equatable {
         prefixCacheBlockSize: Int = 16
     ) {
         self.modelSearchPath = modelSearchPath
+        self.additionalModelSearchPaths = additionalModelSearchPaths
         self.languageModelID = languageModelID
         self.imageGenerationModelID = imageGenerationModelID
         self.textToSpeechModelID = textToSpeechModelID
@@ -116,6 +119,7 @@ struct NativSettings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case modelSearchPath
+        case additionalModelSearchPaths
         case languageModelID
         case imageGenerationModelID
         case textToSpeechModelID
@@ -158,6 +162,7 @@ struct NativSettings: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let legacySelectedModelID = try container.decodeIfPresent(String.self, forKey: .selectedModelID)
         modelSearchPath = try container.decodeIfPresent(String.self, forKey: .modelSearchPath) ?? defaults.modelSearchPath
+        additionalModelSearchPaths = try container.decodeIfPresent([String].self, forKey: .additionalModelSearchPaths) ?? defaults.additionalModelSearchPaths
         languageModelID = try container.decodeIfPresent(String.self, forKey: .languageModelID) ?? legacySelectedModelID ?? defaults.languageModelID
         imageGenerationModelID = try container.decodeIfPresent(String.self, forKey: .imageGenerationModelID) ?? defaults.imageGenerationModelID
         textToSpeechModelID = try container.decodeIfPresent(String.self, forKey: .textToSpeechModelID) ?? defaults.textToSpeechModelID
@@ -197,6 +202,7 @@ struct NativSettings: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(modelSearchPath, forKey: .modelSearchPath)
+        try container.encode(additionalModelSearchPaths, forKey: .additionalModelSearchPaths)
         try container.encodeIfPresent(languageModelID, forKey: .languageModelID)
         try container.encodeIfPresent(imageGenerationModelID, forKey: .imageGenerationModelID)
         try container.encodeIfPresent(textToSpeechModelID, forKey: .textToSpeechModelID)
@@ -258,6 +264,10 @@ struct NativSettings: Codable, Equatable {
         var settings = self
         let trimmedPath = settings.modelSearchPath.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.modelSearchPath = trimmedPath.isEmpty ? Self.defaultModelSearchPath : trimmedPath
+        var seenAdditionalPaths = Set<String>()
+        settings.additionalModelSearchPaths = settings.additionalModelSearchPaths
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seenAdditionalPaths.insert($0).inserted }
         settings.languageModelID = Self.normalizedModelID(settings.languageModelID)
         settings.imageGenerationModelID = Self.normalizedModelID(settings.imageGenerationModelID)
         settings.textToSpeechModelID = Self.normalizedModelID(settings.textToSpeechModelID)
