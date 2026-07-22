@@ -138,7 +138,8 @@ struct HuggingFaceModel: Decodable, Identifiable, Equatable, Sendable {
         return LocalModelMemoryEstimate(
             estimatedModelBytes: UInt64(estimatedModelBytes.rounded(.up)),
             memoryBudgetBytes: memoryBudgetBytes,
-            totalMemoryBytes: totalMemoryBytes
+            totalMemoryBytes: totalMemoryBytes,
+            activationReserveBytes: LocalModelMemoryEstimate.activationReserveBytes(for: capabilities)
         )
     }
 
