@@ -179,8 +179,54 @@ struct ControlPanelView: View {
                 Color.clear.frame(height: 28)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                Menu {
+                    ForEach(IssueReportCategory.allCases) { category in
+                        Button {
+                            reportIssue(category: category)
+                        } label: {
+                            Label(category.displayName, systemImage: category.systemImage)
+                        }
+                    }
+                } label: {
+                    Label("Report an Issue", systemImage: "ladybug")
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .help("Report a problem with prefilled app diagnostics")
+            }
+        }
         .navigationTitle("Nativ")
         .background(ControlPanelSidebarSurfaceReader())
+    }
+
+    private func reportIssue(category: IssueReportCategory) {
+        let body = IssueReportBuilder.markdown(
+            category: category,
+            details: "",
+            sections: IssueDiagnostics.collect(category: category, model: model, runtime: runtime),
+            serverOutput: IssueDiagnostics.serverOutputTail(model: model)
+        )
+        if body.count > IssueReportBuilder.urlBodyCharacterBudget {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(body, forType: .string)
+        }
+        guard let url = IssueReportBuilder.githubIssueURL(
+            title: "",
+            label: category.githubLabel,
+            body: body
+        ) else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     private var recentSessions: [ControlPanelRecentSession] {
