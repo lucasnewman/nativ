@@ -261,7 +261,7 @@ struct ChatResponseMetrics: Equatable, Codable {
     }
 }
 
-struct ChatImageAttachment: Identifiable, Equatable, Codable {
+struct ChatImageAttachment: Identifiable, Equatable, Codable, Sendable {
     let id: UUID
     var filename: String
     var mimeType: String
@@ -450,7 +450,7 @@ struct ChatSessionStore {
         .filter { $0.pathExtension == "json" }
     }
 
-    private func sessionURL(for id: UUID) -> URL {
+    func sessionURL(for id: UUID) -> URL {
         sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
     }
 

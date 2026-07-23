@@ -236,23 +236,29 @@ struct ChatComposer: View {
     }
 
     private var modelPicker: some View {
-        StableChatModelPicker(
-            models: localLibrary.models,
+        ComposerModelPicker(
+            models: languageModels,
             selectedModelID: selectedModelID,
             selectedModelLabel: selectedModelLabel,
             selectedModelProvider: selectedModelProvider,
-            supportsReasoning: selectedModelSupportsThinking,
-            reasoningLevel: reasoningLevel,
+            selectedModelDetail: selectedModelSupportsThinking
+                ? reasoningLevel.rawValue
+                : nil,
+            secondarySection: reasoningPickerSection,
             isModelLoading: model.isModelLoading,
             modelLoadingPercentage: model.modelLoadingPercentage,
             isDisabled: model.isModelLoading || viewModel.hasPendingRequests,
             statusLabel: localModelStatusLabel,
             helpText: modelPickerHelp,
             accessibilityValue: modelPickerAccessibilityValue,
+            shortcutLabel: "⌃⇧M",
             onSelectModel: select,
-            onSwitchModel: { model.switchLanguageModel(to: $0) },
-            onSelectReasoning: applyReasoningLevel
+            onSwitchModel: { model.switchLanguageModel(to: $0) }
         )
+    }
+
+    private var languageModels: [LocalModel] {
+        localLibrary.models.filter { $0.capabilities.contains(.text) }
     }
 
     private var selectedModelID: String? {
@@ -316,7 +322,31 @@ struct ChatComposer: View {
         if localLibrary.isScanning {
             return "Scanning for models…"
         }
-        return localLibrary.error ?? "No installed models"
+        return localLibrary.error ?? "No installed language models"
+    }
+
+    private var reasoningPickerSection: ComposerModelPickerSecondarySection? {
+        guard selectedModelSupportsThinking else {
+            return nil
+        }
+        return ComposerModelPickerSecondarySection(
+            title: "Reasoning",
+            selectedID: reasoningLevel.rawValue,
+            selectedLabel: reasoningLevel.rawValue,
+            options: ChatReasoningLevel.allCases.map {
+                ComposerModelPickerSecondaryOption(
+                    id: $0.rawValue,
+                    title: $0.rawValue,
+                    detail: $0.detail
+                )
+            },
+            onSelect: { rawValue in
+                guard let level = ChatReasoningLevel(rawValue: rawValue) else {
+                    return
+                }
+                applyReasoningLevel(level)
+            }
+        )
     }
 
     private var modelPickerHelp: String {
@@ -335,12 +365,17 @@ struct ChatComposer: View {
     }
 
     private func select(_ localModel: LocalModel) {
-        if localModel.capabilities.contains(.reasoning) {
-            applyReasoningLevel(.max)
-        } else {
-            model.settings.thinkingEnabled = false
+        model.requestPreloadedModelSwitch(
+            to: localModel,
+            for: .language,
+            availableModels: localLibrary.models
+        ) {
+            if localModel.capabilities.contains(.reasoning) {
+                applyReasoningLevel(.max)
+            } else {
+                model.settings.thinkingEnabled = false
+            }
         }
-        model.switchLanguageModel(to: localModel.repoID)
     }
 
     private func applyReasoningLevel(_ level: ChatReasoningLevel) {
@@ -430,7 +465,21 @@ struct ChatComposer: View {
     }
 }
 
-private struct StableChatModelPicker: View {
+struct ComposerModelPickerSecondaryOption: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+}
+
+struct ComposerModelPickerSecondarySection {
+    let title: String
+    let selectedID: String
+    let selectedLabel: String
+    let options: [ComposerModelPickerSecondaryOption]
+    let onSelect: (String) -> Void
+}
+
+struct ComposerModelPicker: View {
     @State private var isPickerHovered = false
     @State private var isMenuOpen = false
 
@@ -438,35 +487,33 @@ private struct StableChatModelPicker: View {
     let selectedModelID: String?
     let selectedModelLabel: String
     let selectedModelProvider: LocalModelProvider?
-    let supportsReasoning: Bool
-    let reasoningLevel: ChatReasoningLevel
+    let selectedModelDetail: String?
+    let secondarySection: ComposerModelPickerSecondarySection?
     let isModelLoading: Bool
     let modelLoadingPercentage: Int?
     let isDisabled: Bool
     let statusLabel: String
     let helpText: String
     let accessibilityValue: String
+    let shortcutLabel: String?
     let onSelectModel: (LocalModel) -> Void
     let onSwitchModel: (String) -> Void
-    let onSelectReasoning: (ChatReasoningLevel) -> Void
 
     var body: some View {
         ZStack {
             pickerLabel
                 .opacity(0)
 
-            ChatModelPickerMenuControl(
+            ComposerModelPickerMenuControl(
                 models: models,
                 selectedModelID: selectedModelID,
                 selectedModelLabel: selectedModelLabel,
                 selectedModelProvider: selectedModelProvider,
-                supportsReasoning: supportsReasoning,
-                reasoningLevel: reasoningLevel,
+                secondarySection: secondarySection,
                 isEnabled: !isDisabled,
                 statusLabel: statusLabel,
                 onSelectModel: onSelectModel,
                 onSwitchModel: onSwitchModel,
-                onSelectReasoning: onSelectReasoning,
                 onTrackingChanged: { isTracking in
                     isMenuOpen = isTracking
                     if !isTracking {
@@ -489,9 +536,9 @@ private struct StableChatModelPicker: View {
         .frame(height: 32)
         .overlay(alignment: .top) {
             if isPickerHovered && !isMenuOpen {
-                ChatModelPickerTooltip(
+                ComposerModelPickerTooltip(
                     title: pickerTooltip,
-                    showsShortcut: !isDisabled
+                    shortcutLabel: isDisabled ? nil : shortcutLabel
                 )
                     .offset(y: -50)
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
@@ -510,11 +557,10 @@ private struct StableChatModelPicker: View {
     }
 
     private var pickerLabel: some View {
-        ChatModelPickerLabel(
+        ComposerModelPickerLabel(
             selectedModelLabel: selectedModelLabel,
             selectedModelProvider: selectedModelProvider,
-            supportsReasoning: supportsReasoning,
-            reasoningLevel: reasoningLevel,
+            selectedModelDetail: selectedModelDetail,
             isModelLoading: isModelLoading,
             modelLoadingPercentage: modelLoadingPercentage
         )
@@ -542,18 +588,16 @@ private struct StableChatModelPicker: View {
 
 }
 
-private struct ChatModelPickerMenuControl: NSViewRepresentable {
+private struct ComposerModelPickerMenuControl: NSViewRepresentable {
     let models: [LocalModel]
     let selectedModelID: String?
     let selectedModelLabel: String
     let selectedModelProvider: LocalModelProvider?
-    let supportsReasoning: Bool
-    let reasoningLevel: ChatReasoningLevel
+    let secondarySection: ComposerModelPickerSecondarySection?
     let isEnabled: Bool
     let statusLabel: String
     let onSelectModel: (LocalModel) -> Void
     let onSwitchModel: (String) -> Void
-    let onSelectReasoning: (ChatReasoningLevel) -> Void
     let onTrackingChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -579,17 +623,11 @@ private struct ChatModelPickerMenuControl: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
-        var parent: ChatModelPickerMenuControl
+        var parent: ComposerModelPickerMenuControl
 
         private static let menuFont = NSFont.menuFont(ofSize: NSFont.systemFontSize)
-        private static let reasoningLabelColumnWidth = ChatReasoningLevel.allCases
-            .map { textWidth($0.rawValue) }
-            .max() ?? 0
-        private static let reasoningDetailColumnWidth = ChatReasoningLevel.allCases
-            .map { textWidth($0.detail) }
-            .max() ?? 0
 
-        init(parent: ChatModelPickerMenuControl) {
+        init(parent: ComposerModelPickerMenuControl) {
             self.parent = parent
         }
 
@@ -624,14 +662,14 @@ private struct ChatModelPickerMenuControl: NSViewRepresentable {
             modelItem.submenu = makeModelMenu()
             menu.addItem(modelItem)
 
-            if parent.supportsReasoning {
-                let reasoningItem = NSMenuItem(
-                    title: "Reasoning   \(parent.reasoningLevel.rawValue)",
+            if let secondarySection = parent.secondarySection {
+                let secondaryItem = NSMenuItem(
+                    title: "\(secondarySection.title)   \(secondarySection.selectedLabel)",
                     action: nil,
                     keyEquivalent: ""
                 )
-                reasoningItem.submenu = makeReasoningMenu()
-                menu.addItem(reasoningItem)
+                secondaryItem.submenu = makeSecondaryMenu(secondarySection)
+                menu.addItem(secondaryItem)
             }
 
             return menu
@@ -677,20 +715,25 @@ private struct ChatModelPickerMenuControl: NSViewRepresentable {
             return menu
         }
 
-        private func makeReasoningMenu() -> NSMenu {
+        private func makeSecondaryMenu(
+            _ section: ComposerModelPickerSecondarySection
+        ) -> NSMenu {
             let menu = NSMenu()
             menu.autoenablesItems = false
 
-            for (index, level) in ChatReasoningLevel.allCases.enumerated() {
+            for option in section.options {
                 let item = NSMenuItem(
-                    title: level.rawValue,
-                    action: #selector(selectReasoning(_:)),
+                    title: option.title,
+                    action: #selector(selectSecondaryOption(_:)),
                     keyEquivalent: ""
                 )
                 item.target = self
-                item.tag = index
-                item.state = level == parent.reasoningLevel ? .on : .off
-                item.attributedTitle = reasoningTitle(level)
+                item.representedObject = option.id
+                item.state = option.id == section.selectedID ? .on : .off
+                item.attributedTitle = secondaryOptionTitle(
+                    option,
+                    options: section.options
+                )
                 menu.addItem(item)
             }
 
@@ -722,9 +765,11 @@ private struct ChatModelPickerMenuControl: NSViewRepresentable {
             parent.onSwitchModel(repoID)
         }
 
-        @objc private func selectReasoning(_ sender: NSMenuItem) {
-            guard ChatReasoningLevel.allCases.indices.contains(sender.tag) else { return }
-            parent.onSelectReasoning(ChatReasoningLevel.allCases[sender.tag])
+        @objc private func selectSecondaryOption(_ sender: NSMenuItem) {
+            guard let optionID = sender.representedObject as? String else {
+                return
+            }
+            parent.secondarySection?.onSelect(optionID)
         }
 
         private func modelMenuLabel(_ modelID: String) -> String {
@@ -741,24 +786,27 @@ private struct ChatModelPickerMenuControl: NSViewRepresentable {
             return image
         }
 
-        private func reasoningTitle(_ level: ChatReasoningLevel) -> NSAttributedString {
+        private func secondaryOptionTitle(
+            _ option: ComposerModelPickerSecondaryOption,
+            options: [ComposerModelPickerSecondaryOption]
+        ) -> NSAttributedString {
             let title = NSMutableAttributedString(
-                string: level.rawValue,
+                string: option.title,
                 attributes: [.font: Self.menuFont]
             )
-            guard !level.detail.isEmpty else { return title }
+            guard !option.detail.isEmpty else { return title }
 
             let labelPadding = padding(
-                from: Self.textWidth(level.rawValue),
-                to: Self.reasoningLabelColumnWidth
+                from: Self.textWidth(option.title),
+                to: options.map { Self.textWidth($0.title) }.max() ?? 0
             ) + String(repeating: "\u{2007}", count: 3)
             let detailPadding = padding(
-                from: Self.textWidth(level.detail),
-                to: Self.reasoningDetailColumnWidth
+                from: Self.textWidth(option.detail),
+                to: options.map { Self.textWidth($0.detail) }.max() ?? 0
             )
             title.append(
                 NSAttributedString(
-                    string: labelPadding + detailPadding + level.detail,
+                    string: labelPadding + detailPadding + option.detail,
                     attributes: [
                         .font: Self.menuFont,
                         .foregroundColor: NSColor.tertiaryLabelColor
@@ -785,11 +833,10 @@ private struct ChatModelPickerMenuControl: NSViewRepresentable {
     }
 }
 
-private struct ChatModelPickerLabel: View {
+private struct ComposerModelPickerLabel: View {
     let selectedModelLabel: String
     let selectedModelProvider: LocalModelProvider?
-    let supportsReasoning: Bool
-    let reasoningLevel: ChatReasoningLevel
+    let selectedModelDetail: String?
     let isModelLoading: Bool
     let modelLoadingPercentage: Int?
 
@@ -829,25 +876,25 @@ private struct ChatModelPickerLabel: View {
 
     private var pickerTitle: Text {
         let modelName = Text(selectedModelLabel)
-        guard supportsReasoning else {
+        guard let selectedModelDetail else {
             return modelName
         }
-        return Text("\(modelName)  \(reasoningLevel.rawValue)").foregroundColor(.secondary)
+        return Text("\(modelName)  \(selectedModelDetail)").foregroundColor(.secondary)
     }
 
 }
 
-private struct ChatModelPickerTooltip: View {
+private struct ComposerModelPickerTooltip: View {
     let title: String
-    let showsShortcut: Bool
+    let shortcutLabel: String?
 
     var body: some View {
         HStack(spacing: 12) {
             Text(title)
                 .foregroundStyle(.primary)
 
-            if showsShortcut {
-                Text("⌃⇧M")
+            if let shortcutLabel {
+                Text(shortcutLabel)
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 8)
@@ -903,7 +950,7 @@ private struct ChatComposerModelIcon: View {
     }
 }
 
-private struct ChatComposerActionMenu: NSViewRepresentable {
+struct ChatComposerActionMenu: NSViewRepresentable {
     let isEnabled: Bool
     let canPasteImage: Bool
     let onAttachImages: () -> Void
@@ -1143,7 +1190,7 @@ private struct ChatQueuedPromptRow: View {
     }
 }
 
-private struct ChatComposerTextEditor: NSViewRepresentable {
+struct ChatComposerTextEditor: NSViewRepresentable {
     @Binding var text: String
     let isEnabled: Bool
     let onSubmit: () -> Void
@@ -1341,7 +1388,7 @@ private enum ComposerReturnBehavior {
     }
 }
 
-private struct ChatPendingImageAttachmentView: View {
+struct ChatPendingImageAttachmentView: View {
     let attachment: ChatImageAttachment
     let onRemove: () -> Void
 
