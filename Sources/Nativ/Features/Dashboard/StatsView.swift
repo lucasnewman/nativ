@@ -129,8 +129,9 @@ private struct DashboardContentView: View, Equatable {
                 modelPerformanceSection
                 recentRequestsSection
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 26)
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .padding(.bottom, 22)
             .frame(maxWidth: 1500, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
