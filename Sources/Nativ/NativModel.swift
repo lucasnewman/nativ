@@ -12,6 +12,12 @@ struct SessionTokenActivitySample: Equatable, Sendable {
     }
 }
 
+private struct PendingModelPreloadSwitch {
+    let modelID: String
+    let slot: ModelPreloadSlot
+    let onSelectionAccepted: () -> Void
+}
+
 @MainActor
 final class NativModel: ObservableObject {
     @Published private(set) var isRunning = false
@@ -24,6 +30,7 @@ final class NativModel: ObservableObject {
     @Published private(set) var modelSwitchInProgress = false
     @Published private(set) var modelSwitchTargetID: String?
     @Published private(set) var modelLoadingProgress: Double?
+    @Published private(set) var modelPreloadMemoryWarning: ModelPreloadMemoryWarning?
     @Published private(set) var metricsLoading = false
     @Published private(set) var environmentHuggingFaceToken = HuggingFaceAuthentication.token()
     @Published var settings = NativSettings.load() {
@@ -47,6 +54,7 @@ final class NativModel: ObservableObject {
     private var preservedSessionMetrics: NativMetrics?
     private var preservedSessionTokenActivity: [SessionTokenActivitySample] = []
     private var isStoppingForModelSwitch = false
+    private var pendingModelPreloadSwitch: PendingModelPreloadSwitch?
 
     private let maxLogCharacters = 250_000
     private let maxSessionActivitySamples = 120
@@ -268,6 +276,56 @@ final class NativModel: ObservableObject {
         switchPreloadedModel(to: modelID, for: .language)
     }
 
+    @discardableResult
+    func requestPreloadedModelSwitch(
+        to localModel: LocalModel,
+        for slot: ModelPreloadSlot,
+        availableModels: [LocalModel],
+        onSelectionAccepted: @escaping () -> Void = {}
+    ) -> Bool {
+        guard !modelSwitchInProgress else {
+            return false
+        }
+
+        if let warning = preloadMemoryWarning(
+            for: localModel,
+            slot: slot,
+            availableModels: availableModels
+        ) {
+            pendingModelPreloadSwitch = PendingModelPreloadSwitch(
+                modelID: localModel.repoID,
+                slot: slot,
+                onSelectionAccepted: onSelectionAccepted
+            )
+            modelPreloadMemoryWarning = warning
+            return true
+        }
+
+        onSelectionAccepted()
+        switchPreloadedModel(to: localModel.repoID, for: slot)
+        return false
+    }
+
+    func confirmPendingModelPreloadSwitch() {
+        guard let pendingModelPreloadSwitch else {
+            modelPreloadMemoryWarning = nil
+            return
+        }
+
+        self.pendingModelPreloadSwitch = nil
+        modelPreloadMemoryWarning = nil
+        pendingModelPreloadSwitch.onSelectionAccepted()
+        switchPreloadedModel(
+            to: pendingModelPreloadSwitch.modelID,
+            for: pendingModelPreloadSwitch.slot
+        )
+    }
+
+    func cancelPendingModelPreloadSwitch() {
+        pendingModelPreloadSwitch = nil
+        modelPreloadMemoryWarning = nil
+    }
+
     func switchPreloadedModel(
         to modelID: String?,
         for slot: ModelPreloadSlot
@@ -321,6 +379,47 @@ final class NativModel: ObservableObject {
                 self.notifyMenuStateChanged()
             }
         }
+    }
+
+    private func preloadMemoryWarning(
+        for candidate: LocalModel,
+        slot: ModelPreloadSlot,
+        availableModels: [LocalModel]
+    ) -> ModelPreloadMemoryWarning? {
+        let totalMemoryBytes = ProcessInfo.processInfo.physicalMemory
+        guard let candidateEstimate = candidate.memoryEstimate(
+            totalMemoryBytes: totalMemoryBytes
+        ) else {
+            return nil
+        }
+
+        let workingSetBytesByModelID = availableModels.reduce(
+            into: [String: UInt64]()
+        ) { estimates, localModel in
+            guard let estimate = localModel.memoryEstimate(
+                totalMemoryBytes: totalMemoryBytes
+            ) else {
+                return
+            }
+            estimates[localModel.repoID] = max(
+                estimates[localModel.repoID] ?? 0,
+                estimate.workingSetBytes
+            )
+        }
+        var currentSelections = [ModelPreloadSlot: String]()
+        let normalizedSettings = settings.normalized()
+        for selectionSlot in ModelPreloadSlot.allCases {
+            currentSelections[selectionSlot] = normalizedSettings.modelID(for: selectionSlot)
+        }
+
+        return ModelPreloadMemoryWarning.evaluate(
+            candidateModelID: candidate.repoID,
+            candidateSlot: slot,
+            currentSelections: currentSelections,
+            workingSetBytesByModelID: workingSetBytesByModelID,
+            memoryBudgetBytes: candidateEstimate.memoryBudgetBytes,
+            totalMemoryBytes: candidateEstimate.totalMemoryBytes
+        )
     }
 
     func applicationWillTerminate() {

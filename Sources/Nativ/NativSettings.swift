@@ -36,6 +36,108 @@ enum ModelPreloadSlot: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+struct ModelPreloadMemoryWarning: Equatable, Identifiable, Sendable {
+    var id: String {
+        "\(candidateSlot.rawValue):\(candidateModelID)"
+    }
+
+    let candidateModelID: String
+    let candidateSlot: ModelPreloadSlot
+    let existingSlots: [ModelPreloadSlot]
+    let estimatedWorkingSetBytes: UInt64
+    let memoryBudgetBytes: UInt64
+    let totalMemoryBytes: UInt64
+
+    var message: String {
+        let candidateName = candidateModelID.split(separator: "/").last.map(String.init)
+            ?? candidateModelID
+        let estimated = Self.byteCount(estimatedWorkingSetBytes)
+        let budget = Self.byteCount(memoryBudgetBytes)
+        let total = Self.byteCount(totalMemoryBytes)
+        let existingKinds = Self.joinedList(existingSlots.map(\.displayName))
+        let existingDescription =
+            existingSlots.count == 1
+            ? "the selected \(existingKinds) model"
+            : "the selected \(existingKinds) models"
+
+        let selectionDescription =
+            "Loading \(candidateName) for \(candidateSlot.displayName) alongside "
+            + "\(existingDescription) is estimated to require \(estimated)."
+        let budgetDescription =
+            "That exceeds this Mac’s \(budget) usable unified-memory budget "
+            + "(\(total) total), which reserves memory for KV cache and runtime headroom."
+        return "\(selectionDescription) \(budgetDescription)"
+    }
+
+    static func evaluate(
+        candidateModelID: String,
+        candidateSlot: ModelPreloadSlot,
+        currentSelections: [ModelPreloadSlot: String],
+        workingSetBytesByModelID: [String: UInt64],
+        memoryBudgetBytes: UInt64,
+        totalMemoryBytes: UInt64
+    ) -> Self? {
+        guard currentSelections[candidateSlot] != candidateModelID,
+              workingSetBytesByModelID[candidateModelID] != nil
+        else {
+            return nil
+        }
+
+        let existingSlots = ModelPreloadSlot.allCases.filter {
+            $0 != candidateSlot && currentSelections[$0] != nil
+        }
+        guard !existingSlots.isEmpty else {
+            return nil
+        }
+
+        var modelIDs = Set(
+            existingSlots.compactMap {
+                currentSelections[$0]
+            })
+        modelIDs.insert(candidateModelID)
+
+        let estimatedWorkingSetBytes = modelIDs.reduce(UInt64(0)) { total, modelID in
+            guard let modelBytes = workingSetBytesByModelID[modelID] else {
+                return total
+            }
+            let sum = total.addingReportingOverflow(modelBytes)
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+        guard estimatedWorkingSetBytes > memoryBudgetBytes else {
+            return nil
+        }
+
+        return Self(
+            candidateModelID: candidateModelID,
+            candidateSlot: candidateSlot,
+            existingSlots: existingSlots,
+            estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+            memoryBudgetBytes: memoryBudgetBytes,
+            totalMemoryBytes: totalMemoryBytes
+        )
+    }
+
+    private static func byteCount(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: bytes),
+            countStyle: .memory
+        )
+    }
+
+    private static func joinedList(_ values: [String]) -> String {
+        switch values.count {
+        case 0:
+            ""
+        case 1:
+            values[0]
+        case 2:
+            values.joined(separator: " and ")
+        default:
+            values.dropLast().joined(separator: ", ") + ", and " + (values.last ?? "")
+        }
+    }
+}
+
 struct NativSettings: Codable, Equatable {
     /// Default hub cache location, resolved from the environment.
     /// See `HuggingFaceCache.defaultHubPath`.

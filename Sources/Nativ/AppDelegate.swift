@@ -424,7 +424,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func switchModelFromMenu(_ sender: NSMenuItem) {
         let rawModelID = sender.representedObject as? String
-        model.switchLanguageModel(to: rawModelID?.isEmpty == false ? rawModelID : nil)
+        guard let modelID = rawModelID?.isEmpty == false ? rawModelID : nil else {
+            model.switchLanguageModel(to: nil)
+            return
+        }
+        guard let localModel = localModels.first(where: { $0.repoID == modelID }) else {
+            model.switchLanguageModel(to: modelID)
+            return
+        }
+        requestLanguageModelSwitch(to: localModel)
     }
 
     @objc private func refreshModelsFromMenu(_ sender: Any?) {
@@ -760,10 +768,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             memoryEstimate: localModel.memoryEstimate(),
             isSelected: model.settings.normalized().languageModelID == localModel.repoID,
             onSelect: { [weak self] in
-                self?.model.switchLanguageModel(to: localModel.repoID)
+                self?.requestLanguageModelSwitch(to: localModel)
             }
         )
         return item
+    }
+
+    private func requestLanguageModelSwitch(to localModel: LocalModel) {
+        let requiresConfirmation = model.requestPreloadedModelSwitch(
+            to: localModel,
+            for: .language,
+            availableModels: localModels
+        )
+        if requiresConfirmation {
+            showMainWindow()
+        }
     }
 
     private var selectedModelMenuTitle: String {

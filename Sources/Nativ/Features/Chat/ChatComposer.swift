@@ -365,12 +365,17 @@ struct ChatComposer: View {
     }
 
     private func select(_ localModel: LocalModel) {
-        if localModel.capabilities.contains(.reasoning) {
-            applyReasoningLevel(.max)
-        } else {
-            model.settings.thinkingEnabled = false
+        model.requestPreloadedModelSwitch(
+            to: localModel,
+            for: .language,
+            availableModels: localLibrary.models
+        ) {
+            if localModel.capabilities.contains(.reasoning) {
+                applyReasoningLevel(.max)
+            } else {
+                model.settings.thinkingEnabled = false
+            }
         }
-        model.switchLanguageModel(to: localModel.repoID)
     }
 
     private func applyReasoningLevel(_ level: ChatReasoningLevel) {

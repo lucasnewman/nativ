@@ -335,7 +335,13 @@ private struct ImageGenerationComposer: View {
     }
 
     private func selectImageModel(_ localModel: LocalModel) {
-        selectImageModel(localModel.repoID)
+        model.requestPreloadedModelSwitch(
+            to: localModel,
+            for: .imageGeneration,
+            availableModels: localLibrary.models
+        ) {
+            viewModel.applyDefaultModel(localModel.repoID)
+        }
     }
 
     private func selectImageModel(_ modelID: String) {

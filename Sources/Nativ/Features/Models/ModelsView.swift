@@ -199,10 +199,15 @@ struct ModelsView: View {
                                 canDelete: localModel.isDeletable && !model.modelSwitchInProgress
                                     && !isModelInUse(localModel.repoID),
                                 onSetPreload: { slot, isEnabled in
-                                    model.switchPreloadedModel(
-                                        to: isEnabled ? localModel.repoID : nil,
-                                        for: slot
-                                    )
+                                    if isEnabled {
+                                        model.requestPreloadedModelSwitch(
+                                            to: localModel,
+                                            for: slot,
+                                            availableModels: localLibrary.models
+                                        )
+                                    } else {
+                                        model.switchPreloadedModel(to: nil, for: slot)
+                                    }
                                 },
                                 onDelete: { deleteInstalledModel(localModel) }
                             )

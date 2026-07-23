@@ -76,7 +76,7 @@ private enum ControlPanelLayout {
 }
 
 struct ControlPanelView: View {
-    let model: NativModel
+    @ObservedObject var model: NativModel
     @ObservedObject var navigation: ControlPanelNavigation
     @ObservedObject var runtime: SystemRuntimeMonitor
     let softwareUpdater: SoftwareUpdater
@@ -442,6 +442,26 @@ struct ControlPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .modifier(ControlPanelDetailSafeArea(isFullScreen: isFullScreen))
+        .alert(
+            "Models May Not Fit in Memory",
+            isPresented: Binding(
+                get: { model.modelPreloadMemoryWarning != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        model.cancelPendingModelPreloadSwitch()
+                    }
+                }
+            )
+        ) {
+            Button("Load Anyway") {
+                model.confirmPendingModelPreloadSwitch()
+            }
+            Button("Cancel", role: .cancel) {
+                model.cancelPendingModelPreloadSwitch()
+            }
+        } message: {
+            Text(model.modelPreloadMemoryWarning?.message ?? "")
+        }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.frame(in: .named(ControlPanelLayout.coordinateSpaceName)).minX
         } action: { leadingEdge in
