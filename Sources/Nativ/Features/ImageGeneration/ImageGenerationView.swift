@@ -93,6 +93,7 @@ struct ImageGenerationView: View {
 private struct ImageGenerationComposer: View {
     @ObservedObject var model: NativModel
     @ObservedObject var viewModel: ImageGenerationViewModel
+    @StateObject private var localLibrary = LocalModelLibrary()
     @State private var editorContentHeight: CGFloat = 0
     @State private var showsSettings = false
     @State private var isDropTargeted = false
@@ -103,8 +104,6 @@ private struct ImageGenerationComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            statusLine
-
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
                     ChatComposerTextEditor(
@@ -153,15 +152,7 @@ private struct ImageGenerationComposer: View {
 
                     Spacer(minLength: 12)
 
-                    HStack(spacing: 6) {
-                        Image(systemName: "photo.artframe")
-                            .foregroundStyle(.secondary)
-                        Text(modelLabel)
-                            .lineLimit(1)
-                    }
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .help(viewModel.modelID)
+                    modelPicker
 
                     Button(action: action) {
                         Image(systemName: viewModel.isGenerating ? "stop.fill" : "arrow.up")
@@ -193,27 +184,20 @@ private struct ImageGenerationComposer: View {
             )
         }
         .padding(.vertical, 18)
-    }
-
-    @ViewBuilder
-    private var statusLine: some View {
-        if viewModel.isGenerating {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                Text(viewModel.statusText ?? "Working…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        } else if let reason = viewModel.unavailableReason(isRunning: model.isRunning) {
-            Text(reason)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        } else if let statusText = viewModel.statusText {
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        .task(id: modelScanKey) {
+            localLibrary.scan(
+                path: model.settings.modelSearchPath,
+                additionalPaths: model.settings.normalized().additionalModelSearchPaths
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .localModelLibraryDidChange)) { _ in
+            localLibrary.scan(
+                path: model.settings.modelSearchPath,
+                additionalPaths: model.settings.normalized().additionalModelSearchPaths
+            )
+        }
+        .onDisappear {
+            localLibrary.cancel()
         }
     }
 
@@ -267,6 +251,74 @@ private struct ImageGenerationComposer: View {
         viewModel.modelID.split(separator: "/").last.map(String.init) ?? viewModel.modelID
     }
 
+    private var modelPicker: some View {
+        ComposerModelPicker(
+            models: imageModels,
+            selectedModelID: viewModel.modelID,
+            selectedModelLabel: modelLabel,
+            selectedModelProvider: selectedModelProvider,
+            selectedModelDetail: nil,
+            secondarySection: nil,
+            isModelLoading: isSelectedModelLoading,
+            modelLoadingPercentage: isSelectedModelLoading
+                ? model.modelLoadingPercentage
+                : nil,
+            isDisabled: model.isModelLoading || viewModel.isGenerating,
+            statusLabel: localModelStatusLabel,
+            helpText: modelPickerHelp,
+            accessibilityValue: modelLabel,
+            shortcutLabel: nil,
+            onSelectModel: selectImageModel,
+            onSwitchModel: selectImageModel
+        )
+    }
+
+    private var imageModels: [LocalModel] {
+        localLibrary.models.filter {
+            $0.capabilities.contains(.imageGeneration)
+        }
+    }
+
+    private var selectedModelProvider: LocalModelProvider? {
+        if let provider = imageModels.first(where: {
+            $0.repoID == viewModel.modelID
+        })?.provider {
+            return provider
+        }
+        return LocalModelProviderResolver.resolve(
+            repoID: viewModel.modelID,
+            modelType: nil,
+            architectures: []
+        )
+    }
+
+    private var isSelectedModelLoading: Bool {
+        model.isModelLoading && model.modelLoadingID == viewModel.modelID
+    }
+
+    private var localModelStatusLabel: String {
+        if localLibrary.isScanning {
+            return "Scanning for models…"
+        }
+        return localLibrary.error ?? "No installed image models"
+    }
+
+    private var modelPickerHelp: String {
+        if viewModel.isGenerating {
+            return "Model switching is unavailable while generating"
+        }
+        if model.isModelLoading {
+            return model.modelLoadingStatusText ?? "Loading \(modelLabel)"
+        }
+        return "Change image model"
+    }
+
+    private var modelScanKey: String {
+        let settings = model.settings.normalized()
+        return ([settings.expandedModelSearchPath] + settings.additionalModelSearchPaths)
+            .joined(separator: "\u{0}")
+    }
+
     private var actionButtonColor: Color {
         viewModel.isGenerating || canSubmit ? .accentColor : Color(nsColor: .tertiaryLabelColor)
     }
@@ -280,6 +332,15 @@ private struct ImageGenerationComposer: View {
             return
         }
         viewModel.run(using: model)
+    }
+
+    private func selectImageModel(_ localModel: LocalModel) {
+        selectImageModel(localModel.repoID)
+    }
+
+    private func selectImageModel(_ modelID: String) {
+        viewModel.applyDefaultModel(modelID)
+        model.switchPreloadedModel(to: modelID, for: .imageGeneration)
     }
 
     private func action() {
@@ -427,7 +488,7 @@ private struct ImageGenerationTurnView: View {
 
         case .failed, .cancelled:
             Label(turn.errorMessage ?? "Image generation failed.", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(turn.status == .cancelled ? .secondary : .orange)
+                .foregroundStyle(turn.status == .cancelled ? .secondary : Color.orange)
                 .textSelection(.enabled)
                 .padding(.vertical, 12)
 

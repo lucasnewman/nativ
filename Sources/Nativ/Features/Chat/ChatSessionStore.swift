@@ -450,7 +450,7 @@ struct ChatSessionStore {
         .filter { $0.pathExtension == "json" }
     }
 
-    private func sessionURL(for id: UUID) -> URL {
+    func sessionURL(for id: UUID) -> URL {
         sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
     }
 

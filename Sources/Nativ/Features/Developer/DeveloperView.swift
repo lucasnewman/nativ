@@ -9,6 +9,7 @@ struct DeveloperView: View {
     @ObservedObject var model: NativModel
     @ObservedObject var runtime: SystemRuntimeMonitor
     @Binding var showsConfiguration: Bool
+    var titleLeadingInset: CGFloat = 0
     @State private var logQuery = ""
     @State private var logLevelFilter: LogLevelFilter = .all
     @State private var selectedEndpointCategory: ServerEndpointCategory = .openAI
@@ -58,6 +59,7 @@ struct DeveloperView: View {
                 .padding(.vertical, 5)
                 .background(Capsule().fill(Color.secondary.opacity(0.10)))
         }
+        .padding(.leading, titleLeadingInset)
         .padding(.trailing, Self.configurationToggleClearance)
     }
 

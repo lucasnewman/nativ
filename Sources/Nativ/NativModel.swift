@@ -22,6 +22,7 @@ final class NativModel: ObservableObject {
     @Published private(set) var allTimeStats = NativAllTimeStats()
     @Published private(set) var sessionTokenActivity: [SessionTokenActivitySample] = []
     @Published private(set) var modelSwitchInProgress = false
+    @Published private(set) var modelSwitchTargetID: String?
     @Published private(set) var modelLoadingProgress: Double?
     @Published private(set) var metricsLoading = false
     @Published private(set) var environmentHuggingFaceToken = HuggingFaceAuthentication.token()
@@ -119,8 +120,19 @@ final class NativModel: ObservableObject {
     }
 
     var isModelLoading: Bool {
-        settings.normalized().languageModelID != nil
-            && (modelSwitchInProgress || metricsLoading || modelLoadingProgress != nil)
+        modelSwitchInProgress
+            || (settings.normalized().languageModelID != nil
+                && (metricsLoading || modelLoadingProgress != nil))
+    }
+
+    var modelLoadingID: String? {
+        if modelSwitchInProgress {
+            return modelSwitchTargetID
+        }
+        guard metricsLoading || modelLoadingProgress != nil else {
+            return nil
+        }
+        return settings.normalized().languageModelID
     }
 
     var modelLoadingPercentage: Int? {
@@ -222,6 +234,7 @@ final class NativModel: ObservableObject {
             preserveCurrentSessionStats()
         } else {
             modelSwitchInProgress = false
+            modelSwitchTargetID = nil
             clearPreservedSessionStats()
         }
 
@@ -252,22 +265,32 @@ final class NativModel: ObservableObject {
     }
 
     func switchLanguageModel(to modelID: String?) {
+        switchPreloadedModel(to: modelID, for: .language)
+    }
+
+    func switchPreloadedModel(
+        to modelID: String?,
+        for slot: ModelPreloadSlot
+    ) {
         guard !modelSwitchInProgress else {
             return
         }
 
         var nextSettings = settings
-        nextSettings.languageModelID = modelID
-        let normalizedModelID = nextSettings.normalized().languageModelID
-        let selectionIsAlreadyApplied = settings.normalized().languageModelID == normalizedModelID
+        nextSettings.setModelID(modelID, for: slot)
+        nextSettings = nextSettings.normalized()
+        let normalizedModelID = nextSettings.modelID(for: slot)
+        let selectionIsAlreadyApplied = settings.normalized().modelID(for: slot)
+            == normalizedModelID
             && server.isRunning
             && !settingsRequireRestart
         guard !selectionIsAlreadyApplied else {
             return
         }
 
-        settings.languageModelID = normalizedModelID
+        settings = nextSettings
         modelSwitchInProgress = true
+        modelSwitchTargetID = normalizedModelID
         notifyMenuStateChanged()
 
         Task { @MainActor [weak self] in
@@ -285,6 +308,7 @@ final class NativModel: ObservableObject {
             guard !self.server.isRunning else {
                 self.appendLog("\nCould not stop the current server to switch models.\n")
                 self.modelSwitchInProgress = false
+                self.modelSwitchTargetID = nil
                 self.clearPreservedSessionStats()
                 self.notifyMenuStateChanged()
                 return
@@ -292,6 +316,7 @@ final class NativModel: ObservableObject {
             self.startServer()
             if !self.server.isRunning {
                 self.modelSwitchInProgress = false
+                self.modelSwitchTargetID = nil
                 self.clearPreservedSessionStats()
                 self.notifyMenuStateChanged()
             }
@@ -367,6 +392,7 @@ final class NativModel: ObservableObject {
                 self?.modelLoadingProgress = nil
                 if self?.isStoppingForModelSwitch != true {
                     self?.modelSwitchInProgress = false
+                    self?.modelSwitchTargetID = nil
                     self?.clearPreservedSessionStats()
                 }
                 self?.notifyMenuStateChanged()
@@ -442,6 +468,7 @@ final class NativModel: ObservableObject {
         )
         metrics = fetchedMetrics
         modelSwitchInProgress = false
+        modelSwitchTargetID = nil
         clearPreservedSessionStats()
         refreshAllTimeStats(runtimePath: fetchedMetrics.server.analyticsDatabasePath)
 

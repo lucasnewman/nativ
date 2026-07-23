@@ -240,8 +240,20 @@ final class ImageGenerationViewModel: ObservableObject {
             currentSession = nil
             currentSessionID = nil
             turns = []
-            createSession()
+            activeReference = nil
+            refreshSessionList()
         }
+    }
+
+    func sessionDataFileURL(for sessionID: UUID) -> URL? {
+        guard storedSessions.contains(where: { $0.id == sessionID }) else {
+            return nil
+        }
+        if sessionID == currentSessionID {
+            persistCurrentSession(updateTimestamp: false)
+        }
+        let url = sessionStore.sessionURL(for: sessionID)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     func run(using appModel: NativModel) {
@@ -739,7 +751,7 @@ final class ImageGenerationViewModel: ObservableObject {
         }) ?? fallbackTypes.map(\.identifier).first(where: provider.hasItemConformingToTypeIdentifier)
     }
 
-    private static func fileURL(from item: NSSecureCoding?) -> URL? {
+    private nonisolated static func fileURL(from item: NSSecureCoding?) -> URL? {
         if let url = item as? URL {
             return url
         }
@@ -755,7 +767,7 @@ final class ImageGenerationViewModel: ObservableObject {
         return nil
     }
 
-    private static func dropFilename(for typeIdentifier: String) -> String {
+    private nonisolated static func dropFilename(for typeIdentifier: String) -> String {
         let fileExtension = UTType(typeIdentifier)?.preferredFilenameExtension ?? "png"
         return "dropped-reference.\(fileExtension)"
     }
@@ -870,7 +882,7 @@ private struct ImageGenerationSessionStore {
         return try? decoder.decode(ImageGenerationSession.self, from: data)
     }
 
-    private func sessionURL(for id: UUID) -> URL {
+    func sessionURL(for id: UUID) -> URL {
         sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
     }
 

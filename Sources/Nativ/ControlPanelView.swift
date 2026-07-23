@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 enum ControlPanelTab: String, CaseIterable, Identifiable {
     case chat = "Chat"
-    case imageGeneration = "Image Generation"
+    case imageGeneration = "Images"
     case dashboard = "Dashboard"
     case models = "Models"
     case integrations = "Integrations"
@@ -12,7 +12,7 @@ enum ControlPanelTab: String, CaseIterable, Identifiable {
     case settings = "Settings"
 
     static var allCases: [ControlPanelTab] {
-        [.chat, .dashboard, .models, .integrations, .developer]
+        [.chat, .imageGeneration, .dashboard, .models, .integrations, .developer]
     }
 
     var id: String { rawValue }
@@ -67,6 +67,14 @@ private enum FooterControl {
     case reportIssue
 }
 
+private enum ControlPanelLayout {
+    static let sidebarMinimumWidth: CGFloat = 220
+    static let sidebarIdealWidth: CGFloat = 260
+    static let sidebarMaximumWidth: CGFloat = 320
+    static let collapsedSidebarTitleClearance: CGFloat = 128
+    static let coordinateSpaceName = "ControlPanelLayout"
+}
+
 struct ControlPanelView: View {
     let model: NativModel
     @ObservedObject var navigation: ControlPanelNavigation
@@ -80,6 +88,9 @@ struct ControlPanelView: View {
     @State private var selectedTab: ControlPanelTab = .chat
     @State private var hoveredFooterControl: FooterControl?
     @State private var splitColumnVisibility: NavigationSplitViewVisibility = .all
+    @State private var detailLeadingEdge = ControlPanelLayout.sidebarIdealWidth
+    @State private var expandedDetailLeadingEdge = ControlPanelLayout.sidebarIdealWidth
+    @State private var isSidebarTransitioning = false
     @State private var isModelConfigurationVisible = false
     @State private var isFullScreen = false
     @State private var isNewChatHovering = false
@@ -88,11 +99,16 @@ struct ControlPanelView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $splitColumnVisibility) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+                .navigationSplitViewColumnWidth(
+                    min: ControlPanelLayout.sidebarMinimumWidth,
+                    ideal: ControlPanelLayout.sidebarIdealWidth,
+                    max: ControlPanelLayout.sidebarMaximumWidth
+                )
         } detail: {
             detail
         }
         .navigationSplitViewStyle(.balanced)
+        .coordinateSpace(name: ControlPanelLayout.coordinateSpaceName)
         .frame(minWidth: 1040, minHeight: 600)
         .background {
             ControlPanelWindowStateReader(isFullScreen: $isFullScreen)
@@ -108,6 +124,9 @@ struct ControlPanelView: View {
         }
         .onChange(of: navigation.newChatRequest) { _, _ in
             handleNewChatRequest()
+        }
+        .onChange(of: splitColumnVisibility) { _, newVisibility in
+            beginSidebarTransition(to: newVisibility)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
             isFullScreen = true
@@ -186,6 +205,9 @@ struct ControlPanelView: View {
                         },
                         onExportFile: {
                             exportRecentConversation(recent)
+                        },
+                        onRevealInFinder: {
+                            revealRecentSession(recent)
                         }
                     )
                     .listRowInsets(sidebarItemInsets)
@@ -390,11 +412,16 @@ struct ControlPanelView: View {
                 case .imageGeneration:
                     ImageGenerationView(model: model, viewModel: imageGeneration)
                 case .dashboard:
-                    StatsView(model: model, dashboard: dashboard)
+                    StatsView(
+                        model: model,
+                        dashboard: dashboard,
+                        titleLeadingInset: detailTitleLeadingInset
+                    )
                 case .models:
                     ModelsView(
                         model: model,
-                        showsConfiguration: $isModelConfigurationVisible
+                        showsConfiguration: $isModelConfigurationVisible,
+                        titleLeadingInset: detailTitleLeadingInset
                     )
                 case .integrations:
                     IntegrationsView(model: model)
@@ -402,7 +429,8 @@ struct ControlPanelView: View {
                     DeveloperView(
                         model: model,
                         runtime: runtime,
-                        showsConfiguration: $isModelConfigurationVisible
+                        showsConfiguration: $isModelConfigurationVisible,
+                        titleLeadingInset: detailTitleLeadingInset
                     )
                 case .settings:
                     SettingsView(
@@ -414,11 +442,22 @@ struct ControlPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .modifier(ControlPanelDetailSafeArea(isFullScreen: isFullScreen))
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.frame(in: .named(ControlPanelLayout.coordinateSpaceName)).minX
+        } action: { leadingEdge in
+            updateDetailLeadingEdge(leadingEdge)
+        }
     }
 
     private func applySidebarSelection(_ selection: ControlPanelSidebarSelection) {
         switch selection {
         case .tab(let tab):
+            if tab == .chat, chat.currentSessionID == nil {
+                chat.createSession()
+            } else if tab == .imageGeneration,
+                      imageGeneration.currentSessionID == nil {
+                imageGeneration.createSession()
+            }
             sidebarSelection = selection
             selectedTab = tab
         case .chat(let sessionID):
@@ -437,6 +476,47 @@ struct ControlPanelView: View {
                 sidebarSelection = .tab(.imageGeneration)
             }
             selectedTab = .imageGeneration
+        }
+    }
+
+    private var detailTitleLeadingInset: CGFloat {
+        guard isSidebarTransitioning else {
+            return splitColumnVisibility == .detailOnly
+                ? ControlPanelLayout.collapsedSidebarTitleClearance
+                : 0
+        }
+
+        let expandedLeadingEdge = max(expandedDetailLeadingEdge, 1)
+        let visibleFraction = min(max(detailLeadingEdge / expandedLeadingEdge, 0), 1)
+        return ControlPanelLayout.collapsedSidebarTitleClearance * (1 - visibleFraction)
+    }
+
+    private func beginSidebarTransition(to visibility: NavigationSplitViewVisibility) {
+        if visibility == .detailOnly {
+            expandedDetailLeadingEdge = max(detailLeadingEdge, 1)
+        }
+        isSidebarTransitioning = true
+    }
+
+    private func updateDetailLeadingEdge(_ leadingEdge: CGFloat) {
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            detailLeadingEdge = max(0, leadingEdge)
+
+            if isSidebarTransitioning {
+                if splitColumnVisibility == .detailOnly {
+                    if detailLeadingEdge <= 0.5 {
+                        isSidebarTransitioning = false
+                    }
+                } else if detailLeadingEdge >= expandedDetailLeadingEdge - 0.5 {
+                    expandedDetailLeadingEdge = detailLeadingEdge
+                    isSidebarTransitioning = false
+                }
+            } else if splitColumnVisibility != .detailOnly,
+                      detailLeadingEdge >= ControlPanelLayout.sidebarMinimumWidth {
+                expandedDetailLeadingEdge = detailLeadingEdge
+            }
         }
     }
 
@@ -491,25 +571,86 @@ struct ControlPanelView: View {
         try? text.write(to: url, atomically: true, encoding: .utf8)
     }
 
+    private func revealRecentSession(_ recent: ControlPanelRecentSession) {
+        let fileURL: URL?
+        switch recent.selection {
+        case .chat(let sessionID):
+            fileURL = chat.sessionDataFileURL(for: sessionID)
+        case .imageGeneration(let sessionID):
+            fileURL = imageGeneration.sessionDataFileURL(for: sessionID)
+        case .tab:
+            fileURL = nil
+        }
+        guard let fileURL else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    }
+
     private func deleteRecentSession(_ recent: ControlPanelRecentSession) {
-        let deletingSelection = sidebarSelection == recent.selection
+        let shouldSelectReplacement = isDisplayedRecent(recent)
+        let replacementSelection = shouldSelectReplacement
+            ? adjacentRecentSelection(to: recent)
+            : nil
 
         switch recent.selection {
         case .chat(let sessionID):
             chat.deleteSession(sessionID)
-            if deletingSelection {
-                applySidebarSelection(chat.currentSessionID.map(ControlPanelSidebarSelection.chat) ?? .tab(.chat))
-            }
         case .imageGeneration(let sessionID):
             imageGeneration.deleteSession(sessionID)
-            if deletingSelection {
-                applySidebarSelection(
-                    imageGeneration.currentSessionID.map(ControlPanelSidebarSelection.imageGeneration)
-                        ?? .tab(.imageGeneration)
-                )
-            }
         case .tab:
             break
+        }
+
+        guard shouldSelectReplacement else {
+            return
+        }
+        applySidebarSelection(
+            replacementSelection ?? fallbackTabSelection(for: recent)
+        )
+    }
+
+    private func adjacentRecentSelection(
+        to recent: ControlPanelRecentSession
+    ) -> ControlPanelSidebarSelection? {
+        let recents = recentSessions
+        guard let index = recents.firstIndex(where: { $0.id == recent.id }) else {
+            return nil
+        }
+        let nextIndex = recents.index(after: index)
+        if recents.indices.contains(nextIndex) {
+            return recents[nextIndex].selection
+        }
+        guard index > recents.startIndex else {
+            return nil
+        }
+        return recents[recents.index(before: index)].selection
+    }
+
+    private func isDisplayedRecent(_ recent: ControlPanelRecentSession) -> Bool {
+        if sidebarSelection == recent.selection {
+            return true
+        }
+        switch (sidebarSelection, recent.selection) {
+        case (.tab(.chat), .chat(let sessionID)):
+            return sessionID == chat.currentSessionID
+        case (.tab(.imageGeneration), .imageGeneration(let sessionID)):
+            return sessionID == imageGeneration.currentSessionID
+        default:
+            return false
+        }
+    }
+
+    private func fallbackTabSelection(
+        for recent: ControlPanelRecentSession
+    ) -> ControlPanelSidebarSelection {
+        switch recent.selection {
+        case .chat:
+            .tab(.chat)
+        case .imageGeneration:
+            .tab(.imageGeneration)
+        case .tab(let tab):
+            .tab(tab)
         }
     }
 
@@ -770,6 +911,15 @@ private struct ControlPanelRecentSession: Identifiable, Equatable {
         }
     }
 
+    var badgeSystemImage: String? {
+        switch id {
+        case .chat:
+            nil
+        case .imageGeneration:
+            "photo"
+        }
+    }
+
     static func recencySort(_ lhs: ControlPanelRecentSession, _ rhs: ControlPanelRecentSession) -> Bool {
         if lhs.updatedAt == rhs.updatedAt {
             return lhs.createdAt > rhs.createdAt
@@ -789,6 +939,7 @@ private struct ControlPanelRecentSessionRow: View {
     let onDelete: () -> Void
     let onCopyConversation: () -> Void
     let onExportFile: () -> Void
+    let onRevealInFinder: () -> Void
     @State private var isHovering = false
     @State private var isDeleteHovering = false
 
@@ -800,6 +951,19 @@ private struct ControlPanelRecentSessionRow: View {
                         .fill(isCurrent ? Color.accentColor : Color.clear)
                         .frame(width: 5, height: 5)
                         .accessibilityHidden(true)
+
+                    if let badgeSystemImage = recent.badgeSystemImage {
+                        Image(systemName: badgeSystemImage)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(Color.secondary.opacity(0.1))
+                            )
+                            .help("Image session")
+                            .accessibilityLabel("Image session")
+                    }
 
                     Text(recent.title)
                         .lineLimit(1)
@@ -844,6 +1008,12 @@ private struct ControlPanelRecentSessionRow: View {
                 Label("Open", systemImage: "arrow.up.right.square")
             }
             .disabled(isSelectionDisabled)
+
+            Button {
+                onRevealInFinder()
+            } label: {
+                Label("Reveal in Finder", systemImage: "folder")
+            }
 
             if canExport {
                 Button {

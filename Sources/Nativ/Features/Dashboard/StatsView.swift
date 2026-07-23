@@ -5,11 +5,13 @@ import SwiftUI
 struct StatsView: View {
     @ObservedObject var model: NativModel
     let dashboard: DashboardViewModel
+    var titleLeadingInset: CGFloat = 0
 
     var body: some View {
         DashboardContentView(
             modelState: DashboardModelState(model: model),
-            dashboard: dashboard
+            dashboard: dashboard,
+            titleLeadingInset: titleLeadingInset
         )
         .equatable()
     }
@@ -106,12 +108,15 @@ private struct DashboardModelState: Equatable {
 private struct DashboardContentView: View, Equatable {
     let modelState: DashboardModelState
     @ObservedObject var dashboard: DashboardViewModel
+    let titleLeadingInset: CGFloat
     @FocusState private var isModelSearchFocused: Bool
     @State private var selectedChartMetric: DashboardOverviewMetric = .tokens
     @State private var isActivityExpanded = false
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.modelState == rhs.modelState && lhs.dashboard === rhs.dashboard
+        lhs.modelState == rhs.modelState
+            && lhs.dashboard === rhs.dashboard
+            && lhs.titleLeadingInset == rhs.titleLeadingInset
     }
 
     var body: some View {
@@ -183,6 +188,7 @@ private struct DashboardContentView: View, Equatable {
             }
             .fixedSize()
         }
+        .padding(.leading, titleLeadingInset)
     }
 
     private var filterBar: some View {

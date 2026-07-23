@@ -336,8 +336,19 @@ final class ChatViewModel: ObservableObject {
             currentSession = nil
             currentSessionID = nil
             messages = []
-            createSession()
+            refreshSessionList()
         }
+    }
+
+    func sessionDataFileURL(for sessionID: UUID) -> URL? {
+        guard storedSessions.contains(where: { $0.id == sessionID }) else {
+            return nil
+        }
+        if sessionID == currentSessionID {
+            persistCurrentSession(updateTimestamp: false)
+        }
+        let url = sessionStore.sessionURL(for: sessionID)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     func conversationText(for sessionID: UUID) -> String? {

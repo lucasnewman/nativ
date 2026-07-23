@@ -1,6 +1,41 @@
 import Foundation
 import NativServerKit
 
+enum ModelPreloadSlot: String, CaseIterable, Identifiable, Sendable {
+    case language
+    case imageGeneration
+    case textToSpeech
+    case speechToText
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .language:
+            "Language"
+        case .imageGeneration:
+            "Image Generation"
+        case .textToSpeech:
+            "Text to Speech"
+        case .speechToText:
+            "Speech to Text"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .language:
+            "text.bubble"
+        case .imageGeneration:
+            "photo"
+        case .textToSpeech:
+            "speaker.wave.2"
+        case .speechToText:
+            "waveform"
+        }
+    }
+}
+
 struct NativSettings: Codable, Equatable {
     /// Default hub cache location, resolved from the environment.
     /// See `HuggingFaceCache.defaultHubPath`.
@@ -324,6 +359,9 @@ struct NativSettings: Codable, Equatable {
         let rhsSpeculativeDecodingActive = rhs.speculativeDecodingEnabled && !rhs.draftModelID.isEmpty
         return lhs.modelSearchPath == rhs.modelSearchPath
             && lhs.languageModelID == rhs.languageModelID
+            && lhs.imageGenerationModelID == rhs.imageGenerationModelID
+            && lhs.textToSpeechModelID == rhs.textToSpeechModelID
+            && lhs.speechToTextModelID == rhs.speechToTextModelID
             && lhs.serverAPIKey == rhs.serverAPIKey
             && lhs.huggingFaceToken == rhs.huggingFaceToken
             && lhs.serverPort == rhs.serverPort
@@ -383,6 +421,15 @@ struct NativSettings: Codable, Equatable {
         if let languageModelID = settings.languageModelID {
             arguments.append(contentsOf: ["--model", languageModelID])
         }
+        if let imageGenerationModelID = settings.imageGenerationModelID {
+            arguments.append(contentsOf: ["--image-model", imageGenerationModelID])
+        }
+        if let textToSpeechModelID = settings.textToSpeechModelID {
+            arguments.append(contentsOf: ["--tts-model", textToSpeechModelID])
+        }
+        if let speechToTextModelID = settings.speechToTextModelID {
+            arguments.append(contentsOf: ["--stt-model", speechToTextModelID])
+        }
 
         if settings.maxKVSize > 0 {
             arguments.append(contentsOf: ["--max-kv-size", "\(settings.maxKVSize)"])
@@ -408,6 +455,32 @@ struct NativSettings: Codable, Equatable {
         }
 
         return arguments
+    }
+
+    func modelID(for slot: ModelPreloadSlot) -> String? {
+        switch slot {
+        case .language:
+            languageModelID
+        case .imageGeneration:
+            imageGenerationModelID
+        case .textToSpeech:
+            textToSpeechModelID
+        case .speechToText:
+            speechToTextModelID
+        }
+    }
+
+    mutating func setModelID(_ modelID: String?, for slot: ModelPreloadSlot) {
+        switch slot {
+        case .language:
+            languageModelID = modelID
+        case .imageGeneration:
+            imageGenerationModelID = modelID
+        case .textToSpeech:
+            textToSpeechModelID = modelID
+        case .speechToText:
+            speechToTextModelID = modelID
+        }
     }
 
     var structuredOutputValidationError: String? {
