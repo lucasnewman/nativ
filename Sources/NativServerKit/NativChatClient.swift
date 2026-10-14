@@ -459,7 +459,7 @@ public struct MLXChatJSONSchema: Encodable, Equatable, Sendable {
 public struct MLXChatCompletionRequest: Encodable, Equatable, Sendable {
     public var model: String
     public var messages: [MLXChatMessage]
-    /// Current environment state, sent after history without becoming part of the stored conversation.
+    /// Current environment data, included in system context without changing the stored conversation.
     public var transientContext: String? = nil
 
     public var maxTokens: Int
@@ -478,9 +478,23 @@ public struct MLXChatCompletionRequest: Encodable, Equatable, Sendable {
     public var stream: Bool
     public var streamOptions: MLXChatStreamOptions?
 
-    public var contextMessages: [MLXChatMessage] {
-        guard let transientContext, !transientContext.isEmpty else { return [] }
-        return [MLXChatMessage(role: "user", content: transientContext)]
+    /// Keep environment snapshots out of user turns and preserve the final user/tool message.
+    public var promptMessages: [MLXChatMessage] {
+        guard let transientContext, !transientContext.isEmpty else { return messages }
+        var result = messages
+        if result.first?.role == "system" {
+            switch result[0].content {
+            case .text(let text):
+                result[0].content = .text(text.isEmpty ? transientContext : text + "\n\n" + transientContext)
+            case .parts(let parts):
+                result[0].content = .parts(parts + [.init(text: transientContext)])
+            case nil:
+                result[0].content = .text(transientContext)
+            }
+        } else {
+            result.insert(MLXChatMessage(role: "system", content: transientContext), at: 0)
+        }
+        return result
     }
 
     public init(
@@ -544,7 +558,7 @@ public struct MLXChatCompletionRequest: Encodable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(model, forKey: .model)
-        try container.encode(messages + contextMessages, forKey: .messages)
+        try container.encode(promptMessages, forKey: .messages)
         try container.encode(maxTokens, forKey: .maxTokens)
         try container.encode(temperature, forKey: .temperature)
         try container.encode(topK, forKey: .topK)
@@ -908,7 +922,7 @@ private struct PromptTokenCountRequest: Encodable {
     let thinkingEndToken: String?
 
     init(_ request: MLXChatCompletionRequest) {
-        input = request.messages + request.contextMessages
+        input = request.promptMessages
         model = request.model
         tools = request.tools
         toolChoice = request.toolChoice

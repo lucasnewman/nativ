@@ -57,12 +57,12 @@ public final class NativResponsesClient: @unchecked Sendable {
         payload.removeValue(forKey: "messages")
         payload.removeValue(forKey: "stream_options")
         payload["max_output_tokens"] = payload.removeValue(forKey: "max_tokens")
-        let instructions = request.messages.filter(Self.isInstruction)
+        let instructions = request.promptMessages.filter(Self.isInstruction)
             .compactMap(\.textContent).filter { !$0.isEmpty }.joined(separator: "\n\n")
         if !instructions.isEmpty {
             payload["instructions"] = .string(instructions)
         }
-        payload["input"] = .array(input + (try Self.inputItems(request.contextMessages)))
+        payload["input"] = .array(input)
         payload["stream"] = .bool(true)
         payload["store"] = .bool(false)
         payload["context_management"] = .array([.object([

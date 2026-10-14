@@ -14,6 +14,39 @@ final class ChatCompactionTests: XCTestCase {
         )
     }
 
+    func testWorkContextStaysInSystemInstructionsAndLeavesQuestionLast() throws {
+        let question = MLXChatMessage(role: "user", content: "What is the Swift programming language?")
+        let contexts: [String?] = [nil, "", "Work-pane context (environment data):\nCurrent chat work items: [{\"id\":\"notes\"}]"]
+        let chatClient = NativChatClient(baseURL: server)
+        let responsesClient = NativResponsesClient(baseURL: server, tenant: "prompt-test")
+        for context in contexts {
+            var chat = request([.init(role: "system", content: "Answer the user's question."), question])
+            chat.transientContext = context
+            let expectedInstructions = "Answer the user's question."
+                + (context.flatMap { $0.isEmpty ? nil : "\n\n" + $0 } ?? "")
+            let wire = try chatClient.makeURLRequest(payload: chat, accepts: "application/json")
+            let body = try MLXJSONValue(jsonData: XCTUnwrap(wire.httpBody))
+            let messages = try XCTUnwrap(body["messages"]?.arrayValue)
+            XCTAssertEqual(messages.count, 2)
+            XCTAssertEqual(messages.first?["role"], .string("system"))
+            XCTAssertEqual(messages.first?["content"], .string(expectedInstructions))
+            XCTAssertEqual(messages.last?["content"], .string(try XCTUnwrap(question.textContent)))
+            XCTAssertEqual(chat.messages[0].textContent, "Answer the user's question.")
+            let countWire = try chatClient.makePromptTokenCountURLRequest(for: chat)
+            let countBody = try MLXJSONValue(jsonData: XCTUnwrap(countWire.httpBody))
+            XCTAssertEqual(countBody["input"], body["messages"])
+            let input = try NativResponsesClient.inputItems(chat.messages)
+            let responseWire = try responsesClient.makeResponseRequest(chat, input: input, compactThreshold: 10000)
+            let responseBody = try MLXJSONValue(jsonData: XCTUnwrap(responseWire.httpBody))
+            XCTAssertEqual(responseBody["instructions"], .string(expectedInstructions))
+            XCTAssertEqual(responseBody["input"], .array(input))
+            XCTAssertEqual(input.count, 1)
+        }
+        var chat = request([question])
+        chat.transientContext = "Environment data"
+        XCTAssertEqual(chat.promptMessages, [.init(role: "system", content: "Environment data"), question])
+    }
+
     func testWireRequestPreservesImagesReasoningToolPairsAndSampling() throws {
         let call = MLXChatToolCall(id: "call-1", function: .init(name: "read", arguments: "{}"))
         let messages = [
@@ -172,7 +205,7 @@ final class ChatCompactionTests: XCTestCase {
     }
 
     @MainActor
-    func testChangingWorkContextPreservesPrefixAndCompactionReplay() throws {
+    func testChangingWorkContextPreservesCompactionReplayAndToolPairs() throws {
         let systemPrompt = ChatViewModel.systemPrompt(
             sessionPrompt: "Follow the user's requirements.",
             personalizationPrompt: "",
@@ -207,18 +240,18 @@ final class ChatCompactionTests: XCTestCase {
             let wire = try client.makeResponseRequest(chat, input: input, compactThreshold: 10000)
             let body = try MLXJSONValue(jsonData: XCTUnwrap(wire.httpBody))
             let sent = try XCTUnwrap(body["input"]?.arrayValue)
-            XCTAssertEqual(body["instructions"], .string(try XCTUnwrap(chat.messages[0].textContent)))
-            XCTAssertEqual(Array(sent.dropLast()), input)
-            XCTAssertEqual(sent.last?["content"], .string(try XCTUnwrap(chat.transientContext)))
-            XCTAssertEqual(sent[sent.count - 2]["tool_call_id"], .string(try XCTUnwrap(call.id)))
+            XCTAssertEqual(body["instructions"], .string(systemPrompt + "\n\n" + (try XCTUnwrap(chat.transientContext))))
+            XCTAssertEqual(sent, input)
+            XCTAssertEqual(sent.last?["tool_call_id"], .string(try XCTUnwrap(call.id)))
             XCTAssertEqual(body["tools"]?.arrayValue?.first?["function"]?["description"], .string("Read release notes"))
             let chatClient = NativChatClient(baseURL: server)
             let chatWire = try chatClient.makeURLRequest(payload: chat, accepts: "application/json")
             let chatBody = try MLXJSONValue(jsonData: XCTUnwrap(chatWire.httpBody))
             let sentMessages = try XCTUnwrap(chatBody["messages"]?.arrayValue)
-            XCTAssertEqual(sentMessages.count, chat.messages.count + 1)
+            XCTAssertEqual(sentMessages.count, chat.messages.count)
+            XCTAssertEqual(sentMessages.first?["content"], body["instructions"])
             XCTAssertEqual(sentMessages.last?["content"], sent.last?["content"])
-            XCTAssertEqual(sentMessages[sentMessages.count - 2]["tool_call_id"], .string(try XCTUnwrap(call.id)))
+            XCTAssertEqual(sentMessages.last?["tool_call_id"], .string(try XCTUnwrap(call.id)))
             XCTAssertNil(chatBody["transientContext"])
             let countWire = try chatClient.makePromptTokenCountURLRequest(for: chat)
             let countBody = try MLXJSONValue(jsonData: XCTUnwrap(countWire.httpBody))

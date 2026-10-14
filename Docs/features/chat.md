@@ -182,6 +182,12 @@ hostnames, local development addresses, or search terms (searched with Google).
 The expand control switches between split and full view. Model configuration and
 the work pane share the right side of chat.
 
+When Chat work is enabled, existing work items are supplied as system environment
+data, separate from the user's question. Empty workspaces add no snapshot. Snapshots
+stay out of the saved transcript and compaction history; the latest state is supplied
+again on each request. Disabling Chat work also removes its prompt instructions.
+Changing a work snapshot changes the system prompt, which can reduce prefix-cache reuse.
+
 - **Documents and code:** use the eye and code icons to switch between preview and
   source. **Copy** copies the full source; its menu also offers plain text for Markdown
   and the file name. You can also export a file. Markdown previews render math and

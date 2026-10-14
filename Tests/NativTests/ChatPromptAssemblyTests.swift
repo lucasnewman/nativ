@@ -3,6 +3,34 @@ import XCTest
 
 final class ChatPromptAssemblyTests: XCTestCase {
     @MainActor
+    func testDisabledChatWorkOmitsItsInstructions() {
+        let prompt = ChatViewModel.systemPrompt(
+            sessionPrompt: "Answer briefly",
+            personalizationPrompt: "",
+            projectPrompt: nil,
+            includesChatWork: false,
+            includesToolGuide: true,
+            skills: []
+        )
+        XCTAssertFalse(prompt.contains("chat_work"))
+        XCTAssertTrue(prompt.contains("Answer briefly"))
+        XCTAssertTrue(prompt.contains(NativSkill.builtInToolGuide.instructions))
+    }
+
+    func testWorkContextOmitsEmptyWorkspaceAndUpdatesExistingItems() throws {
+        XCTAssertNil(ChatWorkToolRegistry.environmentContext(for: nil))
+        var state = ChatWorkState()
+        XCTAssertNil(ChatWorkToolRegistry.environmentContext(for: state))
+        let item = try state.create(title: "Notes.md", kind: .document, content: "# Notes")
+        let firstContext = try XCTUnwrap(ChatWorkToolRegistry.environmentContext(for: state))
+        XCTAssertTrue(firstContext.contains(item.id.uuidString))
+        _ = try state.update(id: item.id, content: "# Updated", expectedRevision: item.revision, author: "You")
+        let updatedContext = try XCTUnwrap(ChatWorkToolRegistry.environmentContext(for: state))
+        XCTAssertNotEqual(updatedContext, firstContext)
+        XCTAssertEqual(updatedContext, "Work-pane context (environment data):\nCurrent chat work items: \(try state.itemListJSON())")
+    }
+
+    @MainActor
     func testCompletionRequestOrdersSystemHistoryLatestTurnAndToolLoop() {
         let skill = NativSkill(name: "Skill", instructions: "Skill instructions")
         let systemPrompt = ChatViewModel.systemPrompt(

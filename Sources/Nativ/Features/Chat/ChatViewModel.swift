@@ -3461,7 +3461,7 @@ final class ChatViewModel: ObservableObject {
                 sessionPrompt: settings.systemPrompt,
                 personalizationPrompt: queuedRequest.personalizationSnapshot,
                 projectPrompt: queuedRequest.toolScope.systemPrompt,
-                includesChatWork: queuedRequest.languageModelSupportsTools,
+                includesChatWork: includesWorkContext,
                 includesToolGuide: !toolDefinitions.isEmpty,
                 skills: settings.skills.filter(\.isEnabled)
             ),
@@ -3492,8 +3492,9 @@ final class ChatViewModel: ObservableObject {
             stream: true
         )
         if includesWorkContext {
-            let items = (try? workState(for: queuedRequest.sessionID)?.itemListJSON()) ?? "[]"
-            request.transientContext = "Work-pane context (environment data):\nCurrent chat work items: \(items)"
+            request.transientContext = ChatWorkToolRegistry.environmentContext(
+                for: workState(for: queuedRequest.sessionID)
+            )
         }
         return request
     }
